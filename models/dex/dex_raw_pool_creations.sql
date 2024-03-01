@@ -46,6 +46,22 @@
             'version': 'v3',
             'pool_position': 45,
         },
+
+
+        '0x5b4a28c940282b5bf183df6a046b8119cf6edeb62859f75e835eb7ba834cce8d': {
+            'type': 'curve_compatible',
+            'version': 'v1 plain',
+            'pool_position': none,
+            'tokens_position': 1,
+            'tokens_count': 4,
+        },
+        '0xa307f5d0802489baddec443058a63ce115756de9020e2b07d3e2cd2f21269e2a': {
+            'type': 'curve_compatible',
+            'version': 'v2 tricrypto',
+            'pool_position': 13,
+            'tokens_position': 4 * 32 + 1,
+            'tokens_count': 3,
+        }
     }
 %}
 
@@ -68,21 +84,53 @@
     ]
 %}
 
+{%
+    set blockchains = ["ethereum"]
+%}
+
+
 
 
 with
 
 
-pool_created_logs as (
+uniswap_pool_created_logs as (
     {% for blockchain in blockchains %}
-        {% for topic0, data in config.items() %}
+        {% for topic0, data in config.items() if data['type'] == 'uniswap_compatible' %}
             select
                 '{{ blockchain }}' as blockchain
-                , '{{ data['type'] }}' as type
-                , '{{ data['version'] }}' as version
-                , substr(data, {{ config[topic0]['pool_position'] }}, 20) as pool
+                , '{{ data.type }}' as type
+                , '{{ data.version }}' as version
+                , substr(data, {{ data.pool_position }}, 20) as pool
                 , substr(topic1, 13) as token0
                 , substr(topic2, 13) as token1
+                , array[token0, token1] as tokens
+                , block_number
+                , block_time
+                , contract_address
+                , tx_hash
+            from {{ source(blockchain, 'logs') }}
+            where topic0 = {{ topic0 }}
+            {% if not loop.last %}
+                union all
+            {% endif %}
+        {% endfor %}
+        {% if not loop.last %}
+            union all
+        {% endif %}
+    {% endfor %}
+)
+
+
+, curve_pool_created_logs as (
+    {% for blockchain in blockchains %}
+        {% for topic0, data in config.items() if data['type'] == 'curve_compatible' %}
+            select
+                '{{ blockchain }}' as blockchain
+                , '{{ data.type }}' as type
+                , '{{ data.version }}' as version
+                , {{ 'contract_address' if data.pool_position is none else 'substr(data, ' + data.pool_position|string + ', 20)' }} as pool
+                , transform(sequence(1, 32 * {{ data.tokens_count }}, 32), x -> substr(substr(substr(data, {{ data.tokens_position }}, 32 * {{ data.tokens_count }}), x, 32), 13)) tokens
                 , block_number
                 , block_time
                 , contract_address
@@ -117,7 +165,7 @@ pool_created_logs as (
 
 
 -- hardcoded OP legacy pools
-, _optimism_ovm1_legacy as (
+, _uniswap_optimism_ovm1_legacy as (
     select
         'optimism' as blockchain
         , 'uniswap_compatible' as type
